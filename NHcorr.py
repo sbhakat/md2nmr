@@ -55,7 +55,7 @@ class NHcorr:
         for vector in range(self.nvectors):
 
             if verbose:
-                message = "[{:6.1%}]".format(1.0*(vector+1)/self.nvectors)
+                message = "[{0:6.1%}]".format(1.0*(vector+1)/self.nvectors)
                 sys.stdout.write(len(message)*'\b' + message)
                 sys.stdout.flush() 
 
@@ -98,7 +98,7 @@ class NHcorr:
                 threads[-1].join()
 
             if verbose:
-                message = "[{:6.1%}]".format(1.0*(vector)/self.nvectors)
+                message = "[{0:6.1%}]".format(1.0*(vector)/self.nvectors)
                 sys.stdout.write(len(message)*'\b' + message)
                 sys.stdout.flush()  
 

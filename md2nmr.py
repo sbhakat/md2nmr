@@ -61,7 +61,8 @@ class md2nmr:
     def create_universe(self):
         """Create a universe from the data in the given trajectory and topology"""
 
-        print "Creating universe for {}".format(self.name)
+        print self.name
+        print "Creating universe for {0}".format(self.name)
         if os.path.isfile(self.alignedTrj) and not self.rerun:
             self.universe = mda.Universe(self.topology, self.alignedTrj)
             self.trajectoryAligned = True
@@ -85,10 +86,10 @@ class md2nmr:
         """Superimpose whole trajectory on first frame"""
 
         if self.trajectoryAligned and not self.rerun:
-            sys.stdout.write('Trajectory of {} already fitted\n'.format(self.name))
+            sys.stdout.write('Trajectory of {0} already fitted\n'.format(self.name))
         else:
 
-            sys.stdout.write('Fitting trajectory of {}\n'.format(self.name))
+            sys.stdout.write('Fitting trajectory of {0}\n'.format(self.name))
             self.universe.trajectory.rewind()
             self.alignedTrj = align.rms_fit_trj(self.universe,
                                              self.universe,
@@ -96,7 +97,7 @@ class md2nmr:
                                              filename=self.alignedTrj)
 
             # load fittet trajectories
-            print "Reading fittet trajectory of {}".format(self.name)
+            print "Reading fittet trajectory of {0}".format(self.name)
             self.universe = mda.Universe(self.topology, self.alignedTrj) 
 
             self.trajectoryAligned = True
@@ -111,7 +112,7 @@ class md2nmr:
 
         if os.path.isfile(NHvectorFile) and not self.rerun:
             # load NH bond vectors etc. from file
-            sys.stdout.write('Loading NH vectors for {}\n'.format(self.name))
+            sys.stdout.write('Loading NH vectors for {0}\n'.format(self.name))
 
             # unpickle data
             loadFile = open(NHvectorFile, 'rb')
@@ -122,7 +123,7 @@ class md2nmr:
 
             # compute NH bond vectors
 
-            sys.stdout.write('Computing NH vectors for {}         '.format(self.name))
+            sys.stdout.write('Computing NH vectors for {0}         '.format(self.name))
 
             self.universe.trajectory.rewind()
             nframes = self.universe.trajectory.numframes
@@ -137,7 +138,7 @@ class md2nmr:
             # loop through timesteps
             for ts in self.universe.trajectory:
 
-                message = "[{:6.1%}]".format(1.0*ts.frame/nframes)
+                message = "[{0:6.1%}]".format(1.0*ts.frame/nframes)
                 sys.stdout.write(len(message)*'\b' + message)
                 sys.stdout.flush() 
 
@@ -164,7 +165,7 @@ class md2nmr:
         """ Compute the angular correlation function of NH bond vectors
         f is the fraction of the data series that is used as maximum lag time"""
 
-        sys.stdout.write('Computing NH correlations for {}         '.format(self.name))
+        sys.stdout.write('Computing NH correlations for {0}         '.format(self.name))
 
         if not f >= 0 and f <= 1:
             print "ERROR: maximum lag time as a fraction of data series length must be between 0 and 1"
@@ -185,7 +186,7 @@ class md2nmr:
 
         for vector in range(nvectors):
 
-            message = "[{:6.1%}]".format(1.0*(vector+1)/nvectors)
+            message = "[{0:6.1%}]".format(1.0*(vector+1)/nvectors)
             sys.stdout.write(len(message)*'\b' + message)
             sys.stdout.flush()
 
