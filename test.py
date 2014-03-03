@@ -5,9 +5,12 @@ from NHcorr import *
 
 name = '04_prod01_protein'
 #path = '/home/oliver/externalDisk/MD_BACKUP/IL-6/IL-6_ffcomp/amber99sb-star_2IL6_13'
-path = '/home/oliver/SiSc/Courses/Thesis/iGRASP/remote_fs/gpufs/externalDisk/MD_BACKUP/IL-6/IL-6_ffcomp/amber99sb-star_2IL6_13'
+#path = '/home/oliver/SiSc/Courses/Thesis/iGRASP/remote_fs/gpufs/externalDisk/MD_BACKUP/IL-6/IL-6_ffcomp/amber99sb-star_2IL6_13'
+#path = '/local/jubio/oschill/iGRASP/IL-6/IL-6_ffcomp/amber99sb-star_2IL6_13'
+path = '/home/oliver/SiSc/Courses/Thesis/iGRASP/remote_fs/jubiofs/iGRASP/IL-6/IL-6_ffcomp/amber99sb-star_2IL6_13'
 
-md = md2nmr(name, path=path)
+md = md2nmr(name, path=path, rerun=False)
+md.compute_order_parameters()
 
 
 

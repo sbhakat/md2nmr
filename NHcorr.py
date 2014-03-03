@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 
-import sys
+import sys, os
+import cPickle as pickle
 import threading
 import multiprocessing
 import numpy as np
@@ -11,7 +12,7 @@ class NHcorr:
     """Compute the NH correlation function from NH vector data and estimate
     convergence and S2 order parameters"""
 
-    def __init__(self, NHvectors, dt, t_lag, t0=0.0):
+    def __init__(self, NHvectors, name, path, dt, t_lag, t0=0.0, S2expFile=None, rerun=False):
         """NHvectors is the time series of NH bond vectors as NHvectors[nframes, nvectors, 3]
         dt is the timestep
         t0 is the starting time
@@ -27,13 +28,23 @@ class NHcorr:
         self.f0        = int(t0 / dt)          # starting frame number
         self.nf        = int((t_lag-t0)/dt)  # number of frames for correlation function
 
+        self.name       = name  # trajectory name
+        self.path       = path  # trajectory path
+        self.NHcorrFile = self.path + '/' + self.name + '_NHcorr_f0-{0}_nf-{1}.dat'.format(self.f0, self.nf)
+        self.S2File     = self.path + '/' + self.name + '_S2.dat'
+        self.S2expFile  = S2expFile # experimental S2 values
+        self.rerun      = rerun  # do not load intermediate results from pickled files
+ 
         self.corr      = np.zeros([self.nvectors, self.nf]) # correlation function per NH vector
         self.corr_std  = np.zeros([self.nvectors, self.nf]) # standard deviations of correlation functions
         self.corr_conf = np.zeros([self.nvectors, self.nf]) # standard error of the mean per NH vector
 
-        self.S2        = None    # NMR order parameters per NH vector
-        self.S2_std    = None    # standard deviation of each order parameter
-        self.S2_conf   = None    # standard error of the mean of each order parameter 
+        self.S2         = None    # NMR order parameters per NH vector
+        self.S2_std     = None    # standard deviation of each order parameter
+        self.S2_conf    = None    # standard error of the mean of each order parameter 
+        self.S2_exp     = None    # experimental S2 values
+        self.S2_exp_err = None    # errors of experimental S2 values
+        self.S2_diff    = None    # difference of estimated and experimental S2 values
 
         if self.f0 < 0:
             print "starting time for correlation function must be >= 0"
@@ -49,21 +60,37 @@ class NHcorr:
     def compute_NH_correlation(self, verbose=False):
         """compute NH correlation function for each NH vector"""
 
-        if verbose:
-            sys.stdout.write('Computing NH correlations [  0.0%]') 
+        if os.path.isfile(self.NHcorrFile) and not self.rerun:
+            print "Loading NH correlations from file."
 
-        for vector in range(self.nvectors):
+            # unpickle data
+            loadFile = open(self.NHcorrFile, 'rb')
+            (self.corr, self.corr_std, self.corr_conf) = pickle.load(loadFile)
+            loadFile.close()  
+
+        else:
 
             if verbose:
-                message = "[{0:6.1%}]".format(1.0*(vector+1)/self.nvectors)
-                sys.stdout.write(len(message)*'\b' + message)
-                sys.stdout.flush() 
+                sys.stdout.write('Computing NH correlations [  0.0%]') 
 
-            self.single_NH_correlation(vector)
+            for vector in range(self.nvectors):
 
-        
-        if verbose:
-            sys.stdout.write('\n')
+                if verbose:
+                    message = "[{0:6.1%}]".format(1.0*(vector+1)/self.nvectors)
+                    sys.stdout.write(len(message)*'\b' + message)
+                    sys.stdout.flush() 
+
+                self.single_NH_correlation(vector)
+
+
+            if verbose:
+                sys.stdout.write('\n')
+
+            # pickle trajectory NH correlations
+            dumpFile = open(self.NHcorrFile, 'wb')
+            pickle.dump((self.corr, self.corr_std, self.corr_conf), dumpFile, protocol=pickle.HIGHEST_PROTOCOL)
+            dumpFile.close()   
+
 
 # ============================================================================ #
 
@@ -132,12 +159,14 @@ class NHcorr:
         """Compute S2 order parameters for each NH bond"""
 
         if self.corr == None:
-            self.compute_NH_correlation_threaded()
+            self.compute_NH_correlation()
 
-        NMRanalysisBondLengths = 1.02
-        NMRanalysisBondLengthsProper = 1.04
-        #scalingFactor = (NMRanalysisBondLengths / self.NHbondlengths.mean())**6
-        scalingFactor = (NMRanalysisBondLengths / NMRanalysisBondLengthsProper)**6
+        print "Computing S2 order parameters"
+
+        NMRanalysisBondLength = 1.02
+        NMRanalysisBondLengthProper = 1.04
+        #scalingFactor = (NMRanalysisBondLength / self.NHbondlength.mean())**6
+        scalingFactor = (NMRanalysisBondLength / NMRanalysisBondLengthProper)**6
 
         self.S2      = scalingFactor * self.corr.mean(1)
         self.S2_std  = self.corr.std(1)
@@ -145,26 +174,44 @@ class NHcorr:
 
 # ============================================================================ #
 
+    def compare_S2_exp(self, expDatFile, resids, resnames):
+        """Compare S2 order parameter estimates to experimental data
+        stored in file expDatFile"""
 
-#def single_NH_correlation(NHvectors, f0, nf, vector):
-#    """compute NH correlation function of a single NH vector
-#    vector is the vector index"""
-#
-#    corr      = np.zeros([nf]) # correlation function
-#    corr_std  = np.zeros([nf]) # standard deviations of correlation function
-#    corr_conf = np.zeros([nf]) # standard error of the mean 
-#        
-#
-#    # second order legendre polynomial of NH vector dotproducts P2[i,j] <=> P2[t,t+tau]
-#    P2 = np.polynomial.legendre.legval( np.dot(NHvectors[f0:f0+2*nf,vector,:],
-#                                               NHvectors[f0:f0+2*nf,vector,:].T),
-#                                               [0,0,1])
-#
-#    # compute the correlation function for each lag time
-#    for frame in range(nf):
-#        d = np.diagonal(P2, frame)
-#        corr     [frame] = d.mean()
-#        corr_std [frame] = d.std()
-#        corr_conf[frame] = corr_std[frame] / d.shape[0]**0.5  
+        self.read_exp_S2(expDatFile, resids, resnames)
 
+        self.S2_diff = self.S2_exp - self.S2
 
+# ============================================================================ #
+
+    def read_exp_S2(self, expDatFile, resids, resnames):
+        """read experimental S2 order parameters from file"""
+
+        if not os.path.isfile(expDatFile):
+            print "File {0} with experimental S2 parameters does not exist"
+            sys.exit(1)
+
+        expDatFp = open(expDatFile, 'r')
+        expDat   = expDatFp.readlines()
+        expDatFp.close()
+
+        self.S2_exp     = np.zeros_like(self.S2)
+        self.S2_exp_err = np.zeros_like(self.S2)
+
+        pos = 0
+        for line in expDat[1:]:
+            fields = line.split()
+
+            resname   = fields[0]
+            resid     = int(fields[1])
+
+            # if residues match
+            if pos < len(resids) and resids[pos] == resid and resnames[pos] == resname:
+                if len(fields) == 4:
+                    self.S2_exp[pos]     = float(fields[2])
+                    self.S2_exp_err[pos] = float(fields[3])
+                else:
+                    self.S2_exp[pos] = self.S2[pos]
+                pos += 1
+
+# ============================================================================ #

@@ -5,6 +5,8 @@ import cPickle as pickle
 import numpy as np
 import MDAnalysis as mda
 import MDAnalysis.analysis.align as align
+import NHcorr
+from md2nmr import *
 
 # ============================================================================ #
 
@@ -19,19 +21,23 @@ class md2nmr:
         self.topology        = topology     # pdb or gro file
         self.trajectory      = trajectory   # xtc or trr file 
         self.path            = path         # path of the trajectory data (analysis results will be written here)
+        self.trjmetafile     = ""           # Filename of trajectory information that is not contained in fitted trajectory
+        self.NHvectorFile    = ""           # Filename of pickled NH vectors
         self.rerun           = rerun        # if True, do the whole analysis again and don't load anything precomputed results from disk
 
         self.NselectionText  = 'name N and not resname PRO and not resid 20'
         self.HselectionText  = 'name H and not resname PRO and not resid 20' 
 
-        self.universe      = None           # create MDAnalysis universe
-        self.NHvectors     = None           # NH vectors per timeframe
-        self.NHbondlengths = None           # NH bondlengths per timeframe
-        self.N             = None           # N atom coordinates per timeframe
-        self.H             = None           # H atom coordinates per timeframe
-        self.time          = None           # time in ps 
-        self.resids        = None           # residue IDs
-        self.resnames      = None           # redidue names
+        self.universe       = None           # create MDAnalysis universe
+        self.NHvectors      = None           # NH vectors per timeframe
+        self.NHbondlengths  = None           # NH bondlengths per timeframe
+        self.N              = None           # N atom coordinates per timeframe
+        self.H              = None           # H atom coordinates per timeframe
+        self.time           = None           # time in ps 
+        self.trjMetaData    = TrjMetaData()  # Meta data for trajectory that is not stored in aligned trajectory
+        self.resids         = None           # residue IDs
+        self.resnames       = None           # redidue names
+        self.NHcorrelations = []             # list of NH correlation functions and S2 order parameters for different starting and lag times
 
         if self.topology == None:
             self.topology = self.name + '.pdb'
@@ -39,10 +45,12 @@ class md2nmr:
         if self.trajectory == None:
             self.trajectory = self.name + '.xtc' 
 
-        self.name = "_".join(self.name.split()) # substitute underscores for whitespace
-        self.topology   = self.path + '/' + self.topology
-        self.trajectory = self.path + '/' + self.trajectory
-        self.alignedTrj = self.path + '/' + self.name + '_aligned.xtc'  # aligned trajectory
+        self.name         = "_".join(self.name.split()) # substitute underscores for whitespace
+        self.topology     = self.path + '/' + self.topology
+        self.trajectory   = self.path + '/' + self.trajectory
+        self.alignedTrj   = self.path + '/' + self.name + '_aligned.xtc'   # aligned trajectory
+        self.trjmetafile  = self.path + '/' + self.name + '_metadata.dat'  # metadata not contained in aligned trajectory
+        self.NHvectorFile = self.path + '/' + self.name + '_NHvectors.dat' # pickled NHvectors
 
         self.trajectoryAligned = False  # True if trajectory is already aligned
 
@@ -61,14 +69,23 @@ class md2nmr:
     def create_universe(self):
         """Create a universe from the data in the given trajectory and topology"""
 
-        print self.name
         print "Creating universe for {0}".format(self.name)
         if os.path.isfile(self.alignedTrj) and not self.rerun:
             self.universe = mda.Universe(self.topology, self.alignedTrj)
             self.trajectoryAligned = True
+
+            # unpickle trajectory meta data
+            loadFile = open(self.trjmetafile, 'rb')
+            self.trjMetaData = pickle.load(loadFile)
+            loadFile.close() 
+
         else:
             self.universe = mda.Universe(self.topology, self.trajectory)
             self.trajectoryAligned = False
+            self.trjMetaData.dt        = self.universe.trajectory.dt
+            self.trjMetaData.totaltime = self.universe.trajectory.totaltime
+            self.trjMetaData.numframes = self.universe.trajectory.numframes
+            self.trjMetaData.units     = self.universe.trajectory.units
 
 # ============================================================================ #
 
@@ -77,8 +94,7 @@ class md2nmr:
 
         self.rms_fit()
         self.compute_NH_vectors()
-#        self.compute_NH_correlation() 
-#        self.compute_S2()
+        self.analyze_NH(verbose=True)
  
 # ============================================================================ #
 
@@ -91,12 +107,17 @@ class md2nmr:
 
             sys.stdout.write('Fitting trajectory of {0}\n'.format(self.name))
             self.universe.trajectory.rewind()
-            self.alignedTrj = align.rms_fit_trj(self.universe,
-                                             self.universe,
-                                             select='backbone',
-                                             filename=self.alignedTrj)
+            align.rms_fit_trj(self.universe,
+                              self.universe,
+                              select='backbone',
+                              filename=self.alignedTrj)
 
-            # load fittet trajectories
+            # pickle trajectory meta data
+            dumpFile = open(self.trjmetafile, 'wb')
+            pickle.dump(self.trjMetaData, dumpFile, protocol=pickle.HIGHEST_PROTOCOL)
+            dumpFile.close() 
+
+            # load fittet trajectory
             print "Reading fittet trajectory of {0}".format(self.name)
             self.universe = mda.Universe(self.topology, self.alignedTrj) 
 
@@ -108,14 +129,20 @@ class md2nmr:
     def compute_NH_vectors(self):
         """Compute NH bond vectors"""
 
-        NHvectorFile = self.path + '/' + self.name + '_NHvectors.dat'
+        self.N = self.universe.selectAtoms(self.NselectionText)
 
-        if os.path.isfile(NHvectorFile) and not self.rerun:
+        self.resids        = self.N.resids()
+        self.resnames      = self.N.resnames()
+        #self.trjMetaData.resids  = self.N.resids()
+        #self.trjMetaData.renames = self.N.resnames()
+ 
+
+        if os.path.isfile(self.NHvectorFile) and not self.rerun:
             # load NH bond vectors etc. from file
             sys.stdout.write('Loading NH vectors for {0}\n'.format(self.name))
 
             # unpickle data
-            loadFile = open(NHvectorFile, 'rb')
+            loadFile = open(self.NHvectorFile, 'rb')
             (self.NHvectors, self.NHbondlengths) = pickle.load(loadFile)
             loadFile.close()
 
@@ -128,12 +155,8 @@ class md2nmr:
             self.universe.trajectory.rewind()
             nframes = self.universe.trajectory.numframes
 
-            self.N = self.universe.selectAtoms(self.NselectionText)
             self.NHvectors     = np.zeros([nframes, self.N.numberOfAtoms(), 3])
             self.NHbondlengths = np.zeros([nframes, self.N.numberOfAtoms()])
-
-            self.resids        = self.N.resids()
-            self.resnames      = self.N.resnames()
 
             # loop through timesteps
             for ts in self.universe.trajectory:
@@ -155,53 +178,47 @@ class md2nmr:
             sys.stdout.write('\n')
 
             # pickle data
-            dumpFile = open(NHvectorFile, 'wb')
+            dumpFile = open(self.NHvectorFile, 'wb')
             pickle.dump((self.NHvectors, self.NHbondlengths), dumpFile, protocol=pickle.HIGHEST_PROTOCOL)
             dumpFile.close()
 
 # ============================================================================ #
     
-    def compute_NH_correlation(self, f=0.5, start=0, stop=None):
-        """ Compute the angular correlation function of NH bond vectors
-        f is the fraction of the data series that is used as maximum lag time"""
+    def analyze_NH(self, verbose=False):
+        """Compute (or load precomputed) NH correlation functions.
+        Then compute S2 order parameters)"""
 
-        sys.stdout.write('Computing NH correlations for {0}         '.format(self.name))
+        self.NHcorrelations = []
 
-        if not f >= 0 and f <= 1:
-            print "ERROR: maximum lag time as a fraction of data series length must be between 0 and 1"
-            sys.exit(1)
+        t_lag = self.trjMetaData.totaltime/2
+        
+        self.analyze_NH_block(t_lag, verbose=verbose)
+   
+# ============================================================================ #
 
-        Nframes  = self.NHvectors.shape[0]
-        nvectors = self.NHvectors.shape[1]
+    def analyze_NH_block(self, t_lag, t0=0.0, verbose=False):
+        """Compute (or load precomputed) NH correlation function for given lag and starting times.
+        Then compute S2 order parameters"""
 
-        if stop == None:
-            nframes  = int(round(self.NHvectors.shape[0] * f))
-            stop     = nframes
-        else:
-            nframes = int(round((stop - start) * f))
+        NHc = NHcorr.NHcorr(self.NHvectors, self.name, self.path, self.trjMetaData.dt, t_lag, t0=t0, rerun=self.rerun)
+        NHc.compute_NH_correlation(verbose=verbose)
+        NHc.compute_S2()
 
-        self.corr      = np.zeros([nvectors, nframes]) # correlation functions
-        self.corr_std  = np.zeros([nvectors, nframes]) # standard deviation
-        self.corr_conf = np.zeros([nvectors, nframes]) # standard error of the mean
+        self.NHcorrelations.append(NHc)
 
-        for vector in range(nvectors):
+# ============================================================================ # 
 
-            message = "[{0:6.1%}]".format(1.0*(vector+1)/nvectors)
-            sys.stdout.write(len(message)*'\b' + message)
-            sys.stdout.flush()
+class TrjMetaData:
+    """Class containing Meta Data of trajectory
+    i.e. timestep, totaltime, etc"""
 
-            # second order legendre polynomial of NH vector dotproducts P2[i,j] <=> P2[t,t+tau]
-            P2 = np.polynomial.legendre.legval( np.dot(self.NHvectors[start:2*stop,vector,:],
-                                                       self.NHvectors[start:2*stop,vector,:].T),
-                                                       [0,0,1])
+    def __init__(self, dt=0.0, totaltime=0.0, numframes=0, units={}, resids=None, resnames=None):
+        self.dt        = dt        # timestep in ps
+        self.totaltime = totaltime # total trajectory time in ps
+        self.numframes = numframes # total number of frames
+        self.units     = units     # dictionary: {'length': 'nm', 'time': 'ps'}
 
-            # compute the correlation function for each lag time
-            for frame in range(nframes):
-                d = np.diagonal(P2, frame)
-                self.corr     [vector, frame] = d.mean()
-                self.corr_std [vector, frame] = d.std()
-                self.corr_conf[vector, frame] = self.corr_std[vector, frame] / d.shape[0]**0.5
-
-        sys.stdout.write('\n')
-
+        #self.resids    = resids    # residue IDs
+        #self.resnames  = resnames  # residue names
+      
 # ============================================================================ # 
