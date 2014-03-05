@@ -12,7 +12,7 @@ class NHcorr:
     """Compute the NH correlation function from NH vector data and estimate
     convergence and S2 order parameters"""
 
-    def __init__(self, NHvectors, name, path, dt, t_lag, t0=0.0, S2expFile=None, rerun=False):
+    def __init__(self, NHvectors, name, path, dt, t_lag, t0=0.0, S2expFile=None, rerun=False, verbose=False):
         """NHvectors is the time series of NH bond vectors as NHvectors[nframes, nvectors, 3]
         dt is the timestep
         t0 is the starting time
@@ -33,7 +33,8 @@ class NHcorr:
         self.NHcorrFile = self.path + '/' + self.name + '_NHcorr_f0-{0}_nf-{1}.dat'.format(self.f0, self.nf)
         self.S2File     = self.path + '/' + self.name + '_S2.dat'
         self.S2expFile  = S2expFile # experimental S2 values
-        self.rerun      = rerun  # do not load intermediate results from pickled files
+        self.rerun      = rerun     # do not load intermediate results from pickled files
+        self.verbose    = verbose   # if True, write verbose output to sys.stdout
  
         self.corr      = np.zeros([self.nvectors, self.nf]) # correlation function per NH vector
         self.corr_std  = np.zeros([self.nvectors, self.nf]) # standard deviations of correlation functions
@@ -47,21 +48,21 @@ class NHcorr:
         self.S2_diff    = None    # difference of estimated and experimental S2 values
 
         if self.f0 < 0:
-            print "starting time for correlation function must be >= 0"
+            sys.stderr.write("starting time for correlation function must be >= 0\n")
             sys.exit(1)
 
         if self.f0 + 2*self.nf > self.nframes:
-            print "starting time + 2 * lag time to use for correlation function must be <= total time."
+            sys.stderr.write("starting time + 2 * lag time to use for correlation function must be <= total time.\n")
             sys.exit(1)
 
 
 # ============================================================================ #
 
-    def compute_NH_correlation(self, verbose=False):
+    def compute_NH_correlation(self):
         """compute NH correlation function for each NH vector"""
 
         if os.path.isfile(self.NHcorrFile) and not self.rerun:
-            print "Loading NH correlations from file."
+            self.vout("Loading NH correlations from file.\n")
 
             # unpickle data
             loadFile = open(self.NHcorrFile, 'rb')
@@ -70,21 +71,18 @@ class NHcorr:
 
         else:
 
-            if verbose:
-                sys.stdout.write('Computing NH correlations [  0.0%]') 
+            self.vout('Computing NH correlations [  0.0%]') 
 
             for vector in range(self.nvectors):
 
-                if verbose:
-                    message = "[{0:6.1%}]".format(1.0*(vector+1)/self.nvectors)
-                    sys.stdout.write(len(message)*'\b' + message)
-                    sys.stdout.flush() 
+                message = "[{0:6.1%}]".format(1.0*(vector+1)/self.nvectors)
+                self.vout(len(message)*'\b' + message)
+                sys.stdout.flush() 
 
                 self.single_NH_correlation(vector)
 
 
-            if verbose:
-                sys.stdout.write('\n')
+            self.vout('\n')
 
             # pickle trajectory NH correlations
             dumpFile = open(self.NHcorrFile, 'wb')
@@ -94,19 +92,18 @@ class NHcorr:
 
 # ============================================================================ #
 
-    def compute_NH_correlation_threaded(self, verbose=False):
+    def compute_NH_correlation_threaded(self):
         """compute NH correlation function for each NH vector"""
 
-        print "Does not work."
-        print "ToDo: Retrieve result from Child Processes"
-        print "Maybe through Queue or Pool"
-        return
+        sys.stderr.write("compute_NH_correlation_threaded does not work.\n")
+        sys.stderr.write("ToDo: Retrieve result from Child Processes.\n")
+        sys.stderr.write("Maybe through Queue or Pool.\n")
+        sys.exit(1)
 
         nCores = multiprocessing.cpu_count()
         vector = 0
 
-        if verbose:
-            sys.stdout.write('Computing NH correlations [  0.0%]') 
+        self.vout('Computing NH correlations [  0.0%]') 
         
         while vector < self.nvectors:
 
@@ -124,14 +121,12 @@ class NHcorr:
             for i in range(threadID):
                 threads[-1].join()
 
-            if verbose:
-                message = "[{0:6.1%}]".format(1.0*(vector)/self.nvectors)
-                sys.stdout.write(len(message)*'\b' + message)
-                sys.stdout.flush()  
+            message = "[{0:6.1%}]".format(1.0*(vector)/self.nvectors)
+            self.vout(len(message)*'\b' + message)
+            sys.stdout.flush()  
 
 
-        if verbose:
-            sys.stdout.write('\n') 
+        self.vout('\n') 
         
 
 # ============================================================================ #
@@ -161,7 +156,7 @@ class NHcorr:
         if self.corr == None:
             self.compute_NH_correlation()
 
-        print "Computing S2 order parameters"
+        self.vout("Computing S2 order parameters\n")
 
         NMRanalysisBondLength = 1.02
         NMRanalysisBondLengthProper = 1.04
@@ -188,7 +183,7 @@ class NHcorr:
         """read experimental S2 order parameters from file"""
 
         if not os.path.isfile(expDatFile):
-            print "File {0} with experimental S2 parameters does not exist"
+            sys.stderr.write("File {0} with experimental S2 parameters does not exist.\n")
             sys.exit(1)
 
         expDatFp = open(expDatFile, 'r')
@@ -214,4 +209,13 @@ class NHcorr:
                     self.S2_exp[pos] = self.S2[pos]
                 pos += 1
 
+# ============================================================================ #
+
+    def vout(self, message):
+        """verbose output
+        write to sys.stdout if verbose output has been requested"""
+
+        if self.verbose:
+            sys.stdout.write(message)
+ 
 # ============================================================================ #

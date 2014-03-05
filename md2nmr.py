@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 
 import sys, os
+from mpi4py import MPI
 import cPickle as pickle
 import numpy as np
 import MDAnalysis as mda
@@ -15,7 +16,7 @@ class md2nmr:
     (S2 order parameters and chemical shifts)
     The results can be stored and retrieved"""
 
-    def __init__(self, name, topology=None, trajectory=None, path='.', rerun=False):
+    def __init__(self, name, topology=None, trajectory=None, path='.', rerun=False, verbose=True):
 
         self.name            = name         # name of the trajectory (will be used as basename of output files)
         self.topology        = topology     # pdb or gro file
@@ -24,9 +25,11 @@ class md2nmr:
         self.trjmetafile     = ""           # Filename of trajectory information that is not contained in fitted trajectory
         self.NHvectorFile    = ""           # Filename of pickled NH vectors
         self.rerun           = rerun        # if True, do the whole analysis again and don't load anything precomputed results from disk
+        self.verbose         = verbose      # if True, write status messages and print progress to sys.stdout
 
         self.NselectionText  = 'name N and not resname PRO and not resid 20'
         self.HselectionText  = 'name H and not resname PRO and not resid 20' 
+        self.HselectionTextCharmm = 'name HN and not resname PRO and not resid 20'
 
         self.universe       = None           # create MDAnalysis universe
         self.NHvectors      = None           # NH vectors per timeframe
@@ -55,11 +58,11 @@ class md2nmr:
         self.trajectoryAligned = False  # True if trajectory is already aligned
 
         if not os.path.isfile(self.topology):
-            print "Cannot locate file: ", self.topology
+            sys.stderr.write("Cannot locate file: {0}\n".format(self.topology))
             sys.exit(0) 
 
         if not os.path.isfile(self.trajectory):
-            print "Cannot locate file: ", self.trajectory 
+            sys.stderr.write("Cannot locate file: {0}\n".format(self.trajectory))
             sys.exit(0) 
 
         self.create_universe()
@@ -69,7 +72,7 @@ class md2nmr:
     def create_universe(self):
         """Create a universe from the data in the given trajectory and topology"""
 
-        print "Creating universe for {0}".format(self.name)
+        self.vout("Creating universe for {0}\n".format(self.name))
         if os.path.isfile(self.alignedTrj) and not self.rerun:
             self.universe = mda.Universe(self.topology, self.alignedTrj)
             self.trajectoryAligned = True
@@ -94,7 +97,7 @@ class md2nmr:
 
         self.rms_fit()
         self.compute_NH_vectors()
-        self.analyze_NH(verbose=True)
+        self.analyze_NH()
  
 # ============================================================================ #
 
@@ -102,15 +105,28 @@ class md2nmr:
         """Superimpose whole trajectory on first frame"""
 
         if self.trajectoryAligned and not self.rerun:
-            sys.stdout.write('Trajectory of {0} already fitted\n'.format(self.name))
+            self.vout('Trajectory of {0} already fitted\n'.format(self.name))
         else:
 
-            sys.stdout.write('Fitting trajectory of {0}\n'.format(self.name))
+            self.vout('Fitting trajectory of {0}\n'.format(self.name))
             self.universe.trajectory.rewind()
+
+            if not self.verbose:
+                # redirect stdout
+                nirvana = open('/dev/null', 'w')
+                sys.stdout = nirvana
+                sys.stderr = nirvana
+
             align.rms_fit_trj(self.universe,
                               self.universe,
                               select='backbone',
                               filename=self.alignedTrj)
+
+            if not self.verbose:
+                # restore stdout
+                sys.stdout = sys.__stdout__
+                sys.stderr = sys.__stderr__
+                nirvana.close()
 
             # pickle trajectory meta data
             dumpFile = open(self.trjmetafile, 'wb')
@@ -118,7 +134,7 @@ class md2nmr:
             dumpFile.close() 
 
             # load fittet trajectory
-            print "Reading fittet trajectory of {0}".format(self.name)
+            self.vout("Reading fittet trajectory of {0}\n".format(self.name))
             self.universe = mda.Universe(self.topology, self.alignedTrj) 
 
             self.trajectoryAligned = True
@@ -139,7 +155,7 @@ class md2nmr:
 
         if os.path.isfile(self.NHvectorFile) and not self.rerun:
             # load NH bond vectors etc. from file
-            sys.stdout.write('Loading NH vectors for {0}\n'.format(self.name))
+            self.vout('Loading NH vectors for {0}\n'.format(self.name))
 
             # unpickle data
             loadFile = open(self.NHvectorFile, 'rb')
@@ -150,7 +166,7 @@ class md2nmr:
 
             # compute NH bond vectors
 
-            sys.stdout.write('Computing NH vectors for {0}         '.format(self.name))
+            self.vout('Computing NH vectors for {0}         '.format(self.name))
 
             self.universe.trajectory.rewind()
             nframes = self.universe.trajectory.numframes
@@ -162,20 +178,32 @@ class md2nmr:
             for ts in self.universe.trajectory:
 
                 message = "[{0:6.1%}]".format(1.0*ts.frame/nframes)
-                sys.stdout.write(len(message)*'\b' + message)
+                self.vout(len(message)*'\b' + message)
                 sys.stdout.flush() 
 
                 self.N = self.universe.selectAtoms(self.NselectionText)
                 self.H = self.universe.selectAtoms(self.HselectionText)
 
-                self.NHvectors[ts.frame-1,:,:] = self.H.coordinates() - self.N.coordinates()
+                if self.H.numberOfAtoms() == 0:
+                    self.H = self.universe.selectAtoms(self.HselectionTextCharmm) 
+
+                if self.H.numberOfAtoms() != self.N.numberOfAtoms():
+                    sys.stderr.write("\nCannot get same number of H and N atoms for {0}\n".format(self.path))
+                    mpi_abort()
+
+                try:
+                    self.NHvectors[ts.frame-1,:,:] = self.H.coordinates() - self.N.coordinates()
+                except IndexError:
+                    sys.stderr.write("\nCompuation of NH vectors failed (IndexError) for {0}\n".format(self.path))
+                    mpi_abort()
+                    
 
                 for atomIndex in range(self.NHvectors.shape[1]):
                     norm = np.linalg.norm(self.NHvectors[ts.frame-1, atomIndex])
                     self.NHvectors[ts.frame-1, atomIndex]    /= norm
                     self.NHbondlengths[ts.frame-1, atomIndex] = norm
 
-            sys.stdout.write('\n')
+            self.vout('\n')
 
             # pickle data
             dumpFile = open(self.NHvectorFile, 'wb')
@@ -184,7 +212,7 @@ class md2nmr:
 
 # ============================================================================ #
     
-    def analyze_NH(self, verbose=False):
+    def analyze_NH(self):
         """Compute (or load precomputed) NH correlation functions.
         Then compute S2 order parameters)"""
 
@@ -192,19 +220,28 @@ class md2nmr:
 
         t_lag = self.trjMetaData.totaltime/2
         
-        self.analyze_NH_block(t_lag, verbose=verbose)
+        self.analyze_NH_block(t_lag)
    
 # ============================================================================ #
 
-    def analyze_NH_block(self, t_lag, t0=0.0, verbose=False):
+    def analyze_NH_block(self, t_lag, t0=0.0):
         """Compute (or load precomputed) NH correlation function for given lag and starting times.
         Then compute S2 order parameters"""
 
-        NHc = NHcorr.NHcorr(self.NHvectors, self.name, self.path, self.trjMetaData.dt, t_lag, t0=t0, rerun=self.rerun)
-        NHc.compute_NH_correlation(verbose=verbose)
+        NHc = NHcorr.NHcorr(self.NHvectors, self.name, self.path, self.trjMetaData.dt, t_lag, t0=t0, rerun=self.rerun, verbose=self.verbose)
+        NHc.compute_NH_correlation()
         NHc.compute_S2()
 
         self.NHcorrelations.append(NHc)
+
+# ============================================================================ # 
+
+    def vout(self, message):
+        """verbose output
+        write to sys.stdout if verbose output has been requested"""
+
+        if self.verbose:
+            sys.stdout.write(message)
 
 # ============================================================================ # 
 
@@ -221,4 +258,23 @@ class TrjMetaData:
         #self.resids    = resids    # residue IDs
         #self.resnames  = resnames  # residue names
       
+# ============================================================================ # 
+
+class NHerror(Exception):
+    def __init__(self):
+        pass
+    def __str__(self):
+        return "NHerror raised"
+
+# ============================================================================ # 
+
+def mpi_abort(termCode=1):
+    """Abort execution of all mpi processes"""
+
+    comm = MPI.COMM_WORLD
+    if comm.size > 1:
+        comm.Abort(termCode)
+    else:
+        sys.exit(termCode) 
+
 # ============================================================================ # 

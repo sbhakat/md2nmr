@@ -71,12 +71,15 @@ for proc in range(numprocs):
     if rank == proc:
         for w in work:
             print rank, w
-        print ""
+        #print ""
         sys.stdout.flush()
     comm.Barrier()
 
 
 # do work
 for simName in work:
-    simulations[simName] = md2nmr.md2nmr(runName, path=simPath+'/'+simName, rerun=rerun)
+    simulations[simName] = md2nmr.md2nmr(runName, path=simPath+'/'+simName, rerun=rerun, verbose=False)
     simulations[simName].compute_order_parameters()
+
+
+print "Process {} done.".format(rank)
