@@ -16,18 +16,21 @@ root        = 0
  
 # root distributes work
 if rank == root:
-    indices     = [6, 12, 13, 14 ,15, 21, 22, 23, 26, 31]
-    forcefields = ['amber03',
-                   'amber03-star',
-                   'amber99sb',
-                   'amber99sb-star',
-                   'amber99sb-ildn',
-                   'amber99sb-star-ildn',
-                   'amber99sbnmr1-ildn',
-                   'charmm22star',
-                   'charmm27',
-                   'oplsaa',
-                   'gromos54a7']
+   #indices     = [6, 12, 13, 14 ,15, 21, 22, 23, 26, 31]
+   #forcefields = ['amber03',
+   #                'amber03-star',
+   #                'amber99sb',
+   #                'amber99sb-star',
+   #                'amber99sb-ildn',
+   #                'amber99sb-star-ildn',
+   #                'amber99sbnmr1-ildn',
+   #                'charmm22star',
+   #                'charmm27',
+   #                'oplsaa',
+   #                'gromos54a7']
+    indices     = [14]
+    forcefields = ['charmm27']
+
 
     # create work items
     workItems = []

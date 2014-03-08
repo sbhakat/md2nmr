@@ -12,8 +12,8 @@ path = '/local/jubio/oschill/iGRASP/IL-6/IL-6_ffcomp'
 #simName = 'amber99sb-star_2IL6_13'
 simName = 'gromos54a7_2IL6_23'
 
-#md = md2nmr(name, path=path+'/'+simName, rerun=True, verbose=True)
-#md.compute_order_parameters()
+md = md2nmr(name, path=path+'/'+simName, rerun=False, verbose=True)
+md.compute_order_parameters()
 
 
 
