@@ -2,6 +2,7 @@
 
 from md2nmr import *
 from NHcorr import *
+import ShiftPred as sp
 
 name = '04_prod01_protein'
 #path = '/home/oliver/externalDisk/MD_BACKUP/IL-6/IL-6_ffcomp'
@@ -15,6 +16,12 @@ simName = 'gromos54a7_2IL6_23'
 md = md2nmr(name, path=path+'/'+simName, rerun=False, verbose=True)
 md.compute_order_parameters()
 
+
+
+
+
+s = sp.ShiftPred(md.universe, method='sparta+')
+s.skip = 1000
 
 
 

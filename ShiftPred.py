@@ -1,7 +1,4 @@
 #! /usr/bin/env python
-#TODO:
-# write_pdb() write only 'protein'
-# sparta()
 
 import sys, os
 import string, random
@@ -15,27 +12,28 @@ import MDAnalysis as mda
 class ShiftPred:  
     """Chemical shift predictor for MD trajectories with the help of 3rd party programs"""
 
-    def __init__(self, universe, method="shiftx2"):
+    def __init__(self, universe, method="sparta+"):
 
         self.universe = universe  # MDAnalysis trajectory
         self.method   = method    # 3rd party program to use for prediction
         
-        self.PDBpath     = ""           # path at which to store temporary pdb files
-        self.PDBbasename = "shiftpred"  # basename of temporary pdb files
-        self.oneFile     = True         # write all frames to single or multiple pdb files
-        self.PDBswritten = []           # list of pdb files written, so they can be removed later
-        self.skip        = 0            # Number of frames to skip for average chemical shift prediction
+        self.PDBpath      = ""           # path at which to store temporary pdb files
+        self.PDBbasename  = "shiftpred"  # basename of temporary pdb files
+        self.oneFile      = True         # write all frames to single or multiple pdb files
+        self.FilesWritten = []           # list of files written, so they can be removed later
+        self.skip         = 0            # Number of frames to skip for average chemical shift prediction
 
+        self.methods      = ['shiftx2', 'sparta+'] # list of implemented methods
 
-        self.methods  = ['shiftx2'] # list of implemented methods
+        self.averageShifts = {}       # dictionary with AverageShifts objects per atom of which shifts have been predicted
 
-# ============================================================================ #
+# ==================================== #
 
     def __del__(self):
 
-        self.rm_pdb()
+        self.rm_files()
 
-# ============================================================================ #
+# ==================================== #
     
     def predict(self, method=None, skip=0):
         """Predict chemical shifts
@@ -52,10 +50,12 @@ class ShiftPred:
             print "method {} unknown.".format(self.method)
             sys.exit(1)
 
-        if method == "shiftx2":
+        if self.method == "shiftx2":
             self.shiftx2()
+        elif self.method == "sparta+":
+            self.averageShifts = self.spartaplus()
 
-# ============================================================================ #
+# ==================================== #
 
     def shiftx2(self):
         """Use shiftx2 to predict average chemical shifts"""
@@ -87,19 +87,20 @@ class ShiftPred:
         # read average chemical shifts
 
         # remove pdb file and shift file
-        self.rm_pdb()
+        self.rm_files()
 
         try:
             os.remove(shiftFile)
         except OSError:
             pass
         
-# ============================================================================ #
+# ==================================== #
 
-    def sparta(self):
+    def spartaplus(self):
         """Use SPARTA+ to predict average chemical shifts"""
 
-        shiftFile = '/tmp/{:s}.shiftx2'.format(random_string())
+        predictionFiles = []
+        structureFiles  = []
 
         # write frames as models in one pdb file
         PDBfiles = self.write_pdb(oneFile=False) 
@@ -108,30 +109,115 @@ class ShiftPred:
         try:
 
             cmd = ['sparta+',
-                   '-out {}'.format(),
                    '-in']
+                   #'-out {}'.format(predictionFile),
+                   #'-outS {}'.format(structureFile),
 
             cmd += PDBfiles
 
-            sub.Popen(cmd).communicate()
+            cwd = os.getcwd()
 
+            # execute spara+ and wait for completion
+            spartaOutFilename = '/tmp/sparta_{:s}.out'.format(random_string())
+            spartaOut         = open(spartaOutFilename, 'w')
+            spartaProc        = sub.Popen(cmd, stdout=spartaOut, stderr=sub.STDOUT)
+
+            # store output filenames
+            for PDBfile in PDBfiles:
+                basename               = os.path.basename(PDBfile)
+                (filename, extension)  = os.path.splitext(basename)
+                predictionFiles.append("{}/{}_pred.tab".format(os.getcwd(), filename))
+                structureFiles.append("{}/{}_struct.tab".format(os.getcwd(), filename)) 
+
+            spartaProc.communicate()
+
+
+        # if Popen failed, complain
         except OSError:
-            self.rm_pdb()
-            os.remove(shiftFile)
+            self.rm_files()
             print "sparta+ executable not in PATH"
             sys.exit(1)
 
-        # read average chemical shifts 
 
-        # remove pdb file and shift file
-        self.rm_pdb()
+        # read chemical shifts
+        shiftsPerFrame = {}  # Per atom a list of ChemShift object, one per frame
+        for filename in predictionFiles:
 
-        try:
-            os.remove(shiftFile)
-        except OSError:
-            pass 
+            shiftsThisFrame = self.spartaplus_read_shifts(filename)
 
-# ============================================================================ #
+            for key in shiftsThisFrame.keys():
+
+                # initialize list if not done yet
+                if not shiftsPerFrame.has_key(key):
+                    shiftsPerFrame[key] = []
+
+                # add shifts of this frame to list
+                shiftsPerFrame[key].append(shiftsThisFrame[key])
+
+
+        # average chemical shifts over frames
+        averageShifts = {}
+        for key in shiftsPerFrame.keys():
+            averageShifts[key] = AverageShifts(shiftsPerFrame[key])
+
+        # remove pdb file and prediction and structure files
+        self.rm_files()
+        self.rm_files(predictionFiles)
+        self.rm_files(structureFiles)
+
+        return averageShifts
+
+# ==================================== #
+
+    def spartaplus_read_shifts(self, filename):
+        """read chemical shifts from sparta plus prediction file"""
+
+        shiftFile = open(filename, 'r')
+        shiftData = shiftFile.readlines()
+        shiftFile.close()
+
+        sequence = ''
+
+        shiftStart = 0
+        for l, line in enumerate(shiftData):
+            fields = line.split()
+
+            if len(fields) > 1 and fields[0] == 'DATA' and fields[1] == 'SEQUENCE':
+                subsequence = ''.join(fields[2:])
+                sequence += subsequence.upper()
+
+            if len(fields) > 0 and fields[0] == 'FORMAT':
+                shiftStart = l + 2
+                break
+
+        shiftsPerElement = {}
+        shiftsPerElement["N" ] = ChemShifts(sequence, 'N')
+        shiftsPerElement["HN"] = ChemShifts(sequence, 'HN')
+        shiftsPerElement["C" ] = ChemShifts(sequence, 'C')
+        shiftsPerElement["CA"] = ChemShifts(sequence, 'CA')
+        shiftsPerElement["CB"] = ChemShifts(sequence, 'CB')
+        shiftsPerElement["HA"] = ChemShifts(sequence, 'HA')
+
+        for l, line in enumerate(shiftData[shiftStart:]):
+            fields = line.split()
+
+            resid   = int(fields[0])
+            resname = fields[1].upper()
+            element = fields[2].upper()
+            shift   = float(fields[4])
+
+            elementIndex = 2
+
+            if len(element) == 3:
+                elementIndex = int(element[-1])
+                element      = element[:-1]
+
+            if elementIndex == 2:
+                shiftsPerElement[element].set_shift(shift, resid, resname)
+
+        return shiftsPerElement
+
+# ==================================== #
 
     def write_pdb(self, basename=None, PDBpath=None, oneFile=True):
         """Write the trajectory in self.universe as PDB files
@@ -153,12 +239,16 @@ class ShiftPred:
         if PDBpath:
             self.PDBpath     = PDBpath   # path at which to store temporary pdb files
 
+        # rewind and select only protein atoms
+        self.universe.trajectory.rewind()
+        protein = self.universe.selectAtoms('protein')
+
         if self.oneFile:
 
             # create one writer for whole trajectory if all frames go into same file
             PDBfilename = "{}/{}.pdb".format(self.PDBpath, self.PDBbasename)
             writer = mda.Writer(PDBfilename, multiframe=True)
-            self.PDBswritten.append(PDBfilename)
+            self.FilesWritten.append(PDBfilename)
             PDBfilenames.append(PDBfilename)
             
             # loop through frames
@@ -166,7 +256,8 @@ class ShiftPred:
 
                 # skip frames
                 if nframe % (self.skip + 1 ) == 0:
-                    writer.write(self.universe)
+                    #writer.write(self.universe)
+                    writer.write(protein)
 
             writer.close_trajectory() 
 
@@ -182,29 +273,212 @@ class ShiftPred:
                     nwrite = nframe / (self.skip + 1)
                     PDBfilename = "{}/{}_{:0>5d}.pdb".format(self.PDBpath, self.PDBbasename, nwrite)
                     writer = mda.Writer(PDBfilename)
-                    self.PDBswritten.append(PDBfilename)
+                    self.FilesWritten.append(PDBfilename)
                     PDBfilenames.append(PDBfilename)
 
-                    writer.write(self.universe)
+                    #writer.write(self.universe)
+                    writer.write(protein)
 
                     # close each writer
                     writer.close_trajectory()
 
         return PDBfilenames
 
-# ============================================================================ #
+# ==================================== #
 
-    def rm_pdb(self):
-        """Remove all PDB files written by write_pdb()"""
+    def rm_files(self, filelist=None):
+        """Remove all files in the given list
+        If no list is given, all PDB files written by write_pdb() are deleted"""
+
+        if filelist:
+            removelist = filelist
+        else:
+            removelist = self.FilesWritten
 
         while True:
             try:
-                os.remove(self.PDBswritten.pop())
+                os.remove(removelist.pop())
             except OSError:
                 pass
             except IndexError:
                 break
 
+# ============================================================================ #
+
+class ChemShifts:
+    """Hold the chemical shifts of one atom for a single structure for all residues"""
+
+    def __init__(self, sequence, atom):
+
+        self.possibleAtoms = ['N', 'HN', 'C', 'CA', 'HA', 'CB']
+
+        self.sequence      = sequence.upper()   # amino acid sequence as one letter codes in one string
+        self.atom          = atom               # one atom from possible atoms for which the shifts are stored
+
+        self.nShifts       = 0           # number of chemical shifts for the given atom
+        self.shifts        = np.zeros(0) # shifts in ppm
+        self.resids        = np.zeros(0) # residue IDs of chemical shifts
+        self.resn          = []          # residue names as one   letter codes
+        self.resname       = []          # residue names as three letter codes
+        self.nextPos       = 0           # next position for shift insertion
+
+        # amino acid dictionaries
+
+        self.aa3to1 = {
+                       "Ala": "A",
+                       "Cys": "C",
+                       "Asp": "D",
+                       "Glu": "E",
+                       "Phe": "F",
+                       "Gly": "G",
+                       "His": "H",
+                       "Ile": "I",
+                       "Lys": "K",
+                       "Leu": "L",
+                       "Met": "M",
+                       "Asn": "N",
+                       "Pro": "P",       
+                       "Gln": "Q",
+                       "Arg": "R",
+                       "Ser": "S",
+                       "Thr": "T",
+                       "Val": "V",
+                       "Trp": "W",
+                       "Tyr": "Y"}
+
+        self.aa1to3 = {
+                       "A": "Ala",
+                       "C": "Cys",
+                       "D": "Asp",
+                       "E": "Glu",
+                       "F": "Phe",
+                       "G": "Gly",
+                       "H": "His",
+                       "I": "Ile",
+                       "K": "Lys",
+                       "L": "Leu",
+                       "M": "Met",
+                       "N": "Asn",
+                       "P": "Pro",
+                       "Q": "Gln",
+                       "R": "Arg",
+                       "S": "Ser",
+                       "T": "Thr",
+                       "V": "Val",
+                       "W": "Trp",
+                       "Y": "Tyr"}
+
+        if self.atom not in self.possibleAtoms:
+            print "Chemical shifts for {} not implemented".format(self.atom)
+            sys.exit(1)
+
+        self.set_length()
+ 
+# ==================================== #
+
+    def set_length(self):
+        """Determine number of shifts to store from sequence
+        no N  shift for: first res, Pro
+        no HN shift for: first res, Pro
+        no CB shift for: Gly
+        no C  shift for: last res"""
+
+        # count number of prolines and glycines in sequence
+        nPro = self.sequence.count('P')
+        nGly = self.sequence.count('G')
+
+        self.nShifts = len(self.sequence)
+
+        # determine proper number of shifts for element
+        if self.atom == 'N' or self.atom == 'HN':
+            self.nShifts -= 1    # first residue
+            self.nShifts -= nPro # prolines
+        elif self.atom == 'CB':
+            self.nShifts -= nGly # glycines
+        elif self.atom == 'C':
+            self.nShifts -= 1    # last residue
+        
+        # initialize data structures
+        self.shifts  = np.zeros(self.nShifts, dtype=np.float64)
+        self.resids  = np.zeros(self.nShifts, dtype=np.int64)
+        self.nextPos = 0
+
+# ==================================== #
+
+    def set_shift(self, shift, resid, resname):
+        """set next chemical shift"""
+
+        # set resname
+        if len(resname) == 1:
+            self.resn   .append(resname.upper())
+            self.resname.append(self.aa1to3[resname])
+
+        elif len(resname) == 3:
+            self.resn   .append(self.aa3to1[resname])
+            self.resname.append(resname)
+
+        else:
+            print "Residue name unknown {}.".format(resname)
+            sys.exit(1)
+
+        # set resid and shift
+        self.resids[self.nextPos] = resid
+        self.shifts[self.nextPos] = shift 
+
+        self.nextPos += 1
+
+# ============================================================================ #
+
+class AverageShifts:
+    """Compute average chemical shifts for the given element"""
+
+    def __init__(self, shiftList):
+
+        self.possibleAtoms = ['N', 'HN', 'C', 'CA', 'HA', 'CB']
+
+        self.sequence      = ""          # amino acid sequence as one letter codes in one string
+        self.atom          = ""          # one atom from possible atoms for which the shifts are stored
+
+        self.shiftList     = shiftList   # list of ChemShift objects
+        self.nShifts       = 0           # number of chemical shifts for the given atom
+        self.shifts        = np.zeros(0) # average shifts in ppm
+        self.resids        = np.zeros(0) # residue IDs of chemical shifts
+        self.resn          = []          # residue names as one   letter codes
+        self.resname       = []          # residue names as three letter codes
+
+        self.average()
+
+# ==================================== #
+
+    def average(self):
+        """Compute average of shifts"""
+
+        # copy relevant data
+        try:
+            representative = self.shiftList[0]
+
+            self.sequence = representative.sequence
+            self.atom     = representative.atom
+            self.nShifts  = representative.nShifts
+            self.shifts   = np.zeros_like(representative.shifts)
+            self.resids   = representative.resids
+            self.resn     = representative.resn
+            self.resname  = representative.resname
+
+        except IndexError:
+            print "shiftList is empty"
+            sys.exit(1)
+
+        except AttributeError:
+            print "Whatever is in shiftList, its not a ChemShift object"
+            sys.exit(1)
+
+        # compute average
+        for frame in self.shiftList:
+            self.shifts += frame.shifts
+
+        self.shifts /= len(self.shiftList)
+ 
 # ============================================================================ #
 
 def random_string(size=20):
