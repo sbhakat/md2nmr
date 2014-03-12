@@ -206,7 +206,7 @@ class NHcorr:
                     self.S2_exp[pos]     = float(fields[2])
                     self.S2_exp_err[pos] = float(fields[3])
                 else:
-                    self.S2_exp[pos] = self.S2[pos]
+                    self.S2_exp[pos] = np.nan
                 pos += 1
 
 # ============================================================================ #

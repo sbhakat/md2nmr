@@ -22,6 +22,7 @@ class ShiftPred:
         self.oneFile      = True         # write all frames to single or multiple pdb files
         self.FilesWritten = []           # list of files written, so they can be removed later
         self.skip         = 0            # Number of frames to skip for average chemical shift prediction
+        self.verbose      = False
 
         self.methods      = ['shiftx2', 'sparta+'] # list of implemented methods
 
@@ -35,11 +36,13 @@ class ShiftPred:
 
 # ==================================== #
     
-    def predict(self, method=None, skip=0):
+    def predict(self, method=None, skip=0, verbose=False):
         """Predict chemical shifts
         method    specifies the method to use, if None, fall back to method given at initialization
         skip      number of frames to skip for average
         """
+
+        self.verbose = verbose
 
         self.skip = int(skip)
 
@@ -120,7 +123,11 @@ class ShiftPred:
             # execute spara+ and wait for completion
             spartaOutFilename = '/tmp/sparta_{:s}.out'.format(random_string())
             spartaOut         = open(spartaOutFilename, 'w')
-            spartaProc        = sub.Popen(cmd, stdout=spartaOut, stderr=sub.STDOUT)
+
+            if self.verbose:
+                spartaProc        = sub.Popen(cmd)
+            else:
+                spartaProc        = sub.Popen(cmd, stdout=spartaOut, stderr=sub.STDOUT)
 
             # store output filenames
             for PDBfile in PDBfiles:
@@ -129,7 +136,10 @@ class ShiftPred:
                 predictionFiles.append("{}/{}_pred.tab".format(os.getcwd(), filename))
                 structureFiles.append("{}/{}_struct.tab".format(os.getcwd(), filename)) 
 
-            spartaProc.communicate()
+            (stdoutdata, stderrdata) = spartaProc.communicate()
+            if self.verbose:
+                print stdoutdata
+                print stderrdata
 
 
         # if Popen failed, complain

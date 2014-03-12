@@ -1,0 +1,12 @@
+#PBS -S /bin/bash
+#PBS -q jubio_small
+#PBS -N test
+#PBS -o /local/jubio/oschill/iGRASP/IL-6/IL-6_ffcomp/analysis/md2nmr/test.qsub.out
+#PBS -j oe
+
+#source /usr/local/intel/impi/4.0.3.008/bin64/mpivars.sh
+
+cd /local/jubio/oschill/iGRASP/IL-6/IL-6_ffcomp/analysis/md2nmr
+touch /local/jubio/oschill/iGRASP/IL-6/IL-6_ffcomp/analysis/md2nmr/test.qsusb.touch
+
+#mpiexec -n 16 python predict_shifts.py 
