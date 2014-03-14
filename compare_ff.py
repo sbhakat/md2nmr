@@ -10,9 +10,11 @@ import md2nmr
 
 # ============================================================================ #
 
-simPath         = '/local/jubio/oschill/iGRASP/IL-6/IL-6_ffcomp'
+#simPath         = '/local/jubio/oschill/iGRASP/IL-6/IL-6_ffcomp' # jubio
+simPath         = '/home/oliver/SiSc/Courses/Thesis/iGRASP/IL-6/IL-6_ffcomp/analysis/MDs' # IdeaPad
 runName         = '04_prod01_protein'
 expS2File       = simPath + '/' + 'common_files/IL6_S2_exp.dat'
+expCSFile       = simPath + '/' + 'common_files/IL6_CS_101801_clean.txt'
 skipFrames      = 10
 rerunMD2NMR     = False
 rerunShiftPred  = False
@@ -97,6 +99,7 @@ class Compare_ff:
         messageTemplate = "loading S2 predictions [{:3d}/{:3d}], ETA: {:4.1f} sec."
         message         = messageTemplate.format(0, len(self.simNames), 0)
         sys.stdout.write(message)
+        sys.stdout.flush()
 
         for n, simName in enumerate(self.simNames):
 
@@ -111,6 +114,7 @@ class Compare_ff:
             backspace = len(message) * '\b'
             message = messageTemplate.format(n+1, len(self.simNames), eta)
             sys.stdout.write(backspace + message)
+            sys.stdout.flush()
 
         sys.stdout.write('\n')
 
@@ -132,6 +136,7 @@ class Compare_ff:
         messageTemplate = "loading shift predictions [{:3d}/{:3d}], ETA: {:4.1f} sec."
         message         = messageTemplate.format(0, len(self.simNames), 0)
         sys.stdout.write(message) 
+        sys.stdout.flush()
 
         for n, simName in enumerate(self.simNames):
             pickleFilename = "{}/{}/{}_shiftpred_{}_skip{}.dat".format(self.simPath, 
@@ -150,12 +155,25 @@ class Compare_ff:
             backspace = len(message) * '\b'
             message = messageTemplate.format(n+1, len(self.simNames), eta)
             sys.stdout.write(backspace + message) 
+            sys.stdout.flush()
 
         sys.stdout.write('\n')
 
 # ==================================== #
 
-    def rank_S2_predictions(self):
+    def read_experimental_shifts(self, expFile):
+        """
+        Read experimentally determinded chemical shifts from expFile
+        """
+
+        with open(expFile, 'r') as file:
+            lines = file.readlines()
+
+        return lines
+
+# ==================================== #
+
+    def rank_S2_predictions(self, forcefields, indices):
 
         norms = {}
         means = {}
@@ -170,7 +188,20 @@ class Compare_ff:
             means[simName] = diff[np.invert(np.isnan(diff))].mean()
             SDs[simName]   = diff[np.invert(np.isnan(diff))].std()
 
-        return (norms, means, SDs)
+        data = means
+        
+        fig = plt.figure()
+        i = 0
+        for ff in forcefields:
+            x = []; y = []
+            for index in indices:
+                simName = "{:s}_2IL6_{:d}".format(ff, index)
+                x.append(i)
+                y.append(data[simName])
+                i += 1
+            plt.plot(x,y, 'o', 'MarkerSize', 2)
+
+        plt.show()
 
 # ==================================== #
 
