@@ -189,41 +189,51 @@ class ShiftPred:
         sequence = ''
 
         shiftStart = 0
+        firstResid = 0
         for l, line in enumerate(shiftData):
             fields = line.split()
 
+            # read ID of first residue
+            if len(fields) == 3 and fields[0] == 'DATA' and fields[1] == 'FIRST_RESID':
+                firstResid = int(fields[2])
+
+            # read sequence
             if len(fields) > 1 and fields[0] == 'DATA' and fields[1] == 'SEQUENCE':
                 subsequence = ''.join(fields[2:])
                 sequence += subsequence.upper()
 
+            # get line number prediction table start
             if len(fields) > 0 and fields[0] == 'FORMAT':
                 shiftStart = l + 2
                 break
 
-        shiftsPerElement = {}
-        shiftsPerElement["N" ] = ChemShifts(sequence, 'N')
-        shiftsPerElement["HN"] = ChemShifts(sequence, 'HN')
-        shiftsPerElement["C" ] = ChemShifts(sequence, 'C')
-        shiftsPerElement["CA"] = ChemShifts(sequence, 'CA')
-        shiftsPerElement["CB"] = ChemShifts(sequence, 'CB')
-        shiftsPerElement["HA"] = ChemShifts(sequence, 'HA')
+        # read ID of last residue
+        lastResid = int(shiftData[-1].split()[0])
 
-        for l, line in enumerate(shiftData[shiftStart:]):
-            fields = line.split()
+        shiftsPerElement = {}
+        shiftsPerElement["N" ] = ChemShifts(sequence, firstResid, 'N')
+        shiftsPerElement["HN"] = ChemShifts(sequence, firstResid, 'HN')
+        shiftsPerElement["C" ] = ChemShifts(sequence, firstResid, 'C')
+        shiftsPerElement["CA"] = ChemShifts(sequence, firstResid, 'CA')
+        shiftsPerElement["CB"] = ChemShifts(sequence, firstResid, 'CB')
+        shiftsPerElement["HA"] = ChemShifts(sequence, firstResid, 'HA')
+
+        # read chemical shifts
+        for line in shiftData[shiftStart:]:
+
+            fields  = line.split()
 
             resid   = int(fields[0])
             resname = fields[1].upper()
             element = fields[2].upper()
-            shift   = float(fields[4])
+            shift   = float(fields[4]) 
 
-            elementIndex = 2
+            # strip trailing index
+            while element[-1].isdigit():
+                element = element[:-1]
 
-            if len(element) == 3:
-                elementIndex = int(element[-1])
-                element      = element[:-1]
-
-            if elementIndex == 2:
-                shiftsPerElement[element].set_shift(shift, resid, resname)
+            # set chemical shift
+            shiftsPerElement[element].set_shift(shift, resid, resname)
 
         return shiftsPerElement
 
@@ -240,7 +250,8 @@ class ShiftPred:
 
         rndm             = random_string(size=5)
         self.PDBbasename = "shiftPred_" + rndm  # basename of temporary pdb files
-        self.PDBpath     = "/tmp"               # path at which to store temporary pdb files
+        #self.PDBpath     = "/tmp"               # path at which to store temporary pdb files
+        self.PDBpath     = os.getcwd()          # path at which to store temporary pdb files
         self.oneFile     = oneFile              # write all frames to single or multiple pdb files 
         PDBfilenames     = []                   # PDB filenames written during the current call of the function
 
@@ -316,21 +327,23 @@ class ShiftPred:
 # ============================================================================ #
 
 class ChemShifts:
-    """Hold the chemical shifts of one atom for a single structure for all residues"""
+    """
+    Hold the chemical shifts of one atom for a single structure for all residues
+    """
 
-    def __init__(self, sequence, atom):
+    def __init__(self, sequence, firstResid, atom):
 
         self.possibleAtoms = ['N', 'HN', 'C', 'CA', 'HA', 'CB']
 
+        self.firstResid    = firstResid
         self.sequence      = sequence.upper()   # amino acid sequence as one letter codes in one string
         self.atom          = atom               # one atom from possible atoms for which the shifts are stored
 
-        self.nShifts       = 0           # number of chemical shifts for the given atom
-        self.shifts        = np.zeros(0) # shifts in ppm
-        self.resids        = np.zeros(0) # residue IDs of chemical shifts
-        self.resn          = []          # residue names as one   letter codes
-        self.resname       = []          # residue names as three letter codes
-        self.nextPos       = 0           # next position for shift insertion
+        self.nShifts       = len(self.sequence)                     # number of chemical shifts for the given atom
+        self.shifts        = np.zeros(self.nShifts) * np.nan        # shifts in ppm
+        self.resids        = np.zeros(self.nShifts, dtype=np.int64) # residue IDs of chemical shifts
+        self.resn          = self.sequence                          # residue names as one   letter codes
+        self.resname       = []                                     # residue names as three letter codes
 
         # amino acid dictionaries
 
@@ -382,60 +395,64 @@ class ChemShifts:
             print "Chemical shifts for {} not implemented".format(self.atom)
             sys.exit(1)
 
-        self.set_length()
- 
+        resid = self.firstResid
+        for letter in self.resn:
+            self.resids[resid-firstResid] = resid
+            self.resname.append(self.aa1to3[letter])
+            resid += 1
+
 # ==================================== #
 
-    def set_length(self):
-        """Determine number of shifts to store from sequence
-        no N  shift for: first res, Pro
-        no HN shift for: first res, Pro
-        no CB shift for: Gly
-        no C  shift for: last res"""
-
-        # count number of prolines and glycines in sequence
-        nPro = self.sequence.count('P')
-        nGly = self.sequence.count('G')
-
-        self.nShifts = len(self.sequence)
-
-        # determine proper number of shifts for element
-        if self.atom == 'N' or self.atom == 'HN':
-            self.nShifts -= 1    # first residue
-            self.nShifts -= nPro # prolines
-        elif self.atom == 'CB':
-            self.nShifts -= nGly # glycines
-        elif self.atom == 'C':
-            self.nShifts -= 1    # last residue
-        
-        # initialize data structures
-        self.shifts  = np.zeros(self.nShifts, dtype=np.float64)
-        self.resids  = np.zeros(self.nShifts, dtype=np.int64)
-        self.nextPos = 0
+#    def set_length(self):
+#        """Determine number of shifts to store from sequence
+#        no N  shift for: first res, Pro
+#        no HN shift for: first res, Pro
+#        no CB shift for: Gly
+#        no C  shift for: last res"""
+#
+#        # count number of prolines and glycines in sequence
+#        nPro = self.sequence.count('P')
+#        nGly = self.sequence.count('G')
+#
+#        self.nShifts = len(self.sequence)
+#
+#        # determine proper number of shifts for element
+#        if self.atom == 'N' or self.atom == 'HN':
+#            self.nShifts -= 1    # first residue
+#            self.nShifts -= nPro # prolines
+#        elif self.atom == 'CB':
+#            self.nShifts -= nGly # glycines
+#        elif self.atom == 'C':
+#            self.nShifts -= 1    # last residue
+#        
+#        # initialize data structures
+#        self.shifts  = np.zeros(self.nShifts, dtype=np.float64)
+#        self.resids  = np.zeros(self.nShifts, dtype=np.int64)
+#        self.nextPos = 0
 
 # ==================================== #
 
     def set_shift(self, shift, resid, resname):
         """set next chemical shift"""
 
-        # set resname
-        if len(resname) == 1:
-            self.resn   .append(resname.upper())
-            self.resname.append(self.aa1to3[resname])
-
-        elif len(resname) == 3:
-            self.resn   .append(self.aa3to1[resname])
-            self.resname.append(resname)
-
-        else:
-            print "Residue name unknown {}.".format(resname)
-            sys.exit(1)
+#        # set resname
+#        if len(resname) == 1:
+#            self.resn   .append(resname.upper())
+#            self.resname.append(self.aa1to3[resname])
+#
+#        elif len(resname) == 3:
+#            self.resn   .append(self.aa3to1[resname])
+#            self.resname.append(resname)
+#
+#        else:
+#            print "Residue name unknown {}.".format(resname)
+#            sys.exit(1)
 
         # set resid and shift
-        self.resids[self.nextPos] = resid
-        self.shifts[self.nextPos] = shift 
+        position = resid - self.firstResid
+        self.resids[position] = resid
+        self.shifts[position] = shift 
 
-        self.nextPos += 1
 
 # ============================================================================ #
 

@@ -17,9 +17,6 @@ md = md2nmr(name, path=path+'/'+simName, rerun=False, verbose=True)
 md.compute_order_parameters()
 
 
-
-
-
 s = sp.ShiftPred(md.universe, method='sparta+')
 s.skip = 1000
 

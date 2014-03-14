@@ -26,18 +26,18 @@ root        = 0
 if rank == root:
     indices     = [6, 12, 13, 14 ,15, 21, 22, 23, 26, 31]
     forcefields = ['amber03',
-                    'amber03-star',
-                    'amber99sb',
-                    'amber99sb-star',
-                    'amber99sb-ildn',
-                    'amber99sb-star-ildn',
-                    'amber99sbnmr1-ildn',
-                    'charmm22star',
-                    'charmm27',
-                    'oplsaa',
-                    'gromos54a7']
-   #indices     = [15, 21]
-   #forcefields = ['charmm27']
+                   'amber03-star',
+                   'amber99sb',
+                   'amber99sb-star',
+                   'amber99sb-ildn',
+                   'amber99sb-star-ildn',
+                   'amber99sbnmr1-ildn',
+                   'charmm22star',
+                   'charmm27',
+                   'oplsaa',
+                   'gromos54a7']
+    #indices     = [15]
+    #forcefields = ['charmm27']
 
 
     # create work items
@@ -118,7 +118,10 @@ for i, key in enumerate(simulations.keys()):
         pickle.dump(shiftPredictions[key], dumpFile, protocol=pickle.HIGHEST_PROTOCOL)
         dumpFile.close()  
 
-    print "rank {}, {}/{} done".format(rank, i+1, len(simulations.keys()))
+        # report number of frames
+        print "Pickled {} frames for {} ({}/{}) done".format(len(shiftPredictions[key].averageShifts.values()[0].shiftList), simName, i+1, len(simulations.keys()))
+
+    #print "rank {}, {}/{} done".format(rank, i+1, len(simulations.keys()))
  
 
 print "Process {} done.".format(rank) 
