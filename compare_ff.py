@@ -1,6 +1,7 @@
 #! /usr/bin/env python
+# TODO: Complete ranking of chemical shift data, especially boolean selection
 
-import sys, os, time
+import sys, os, time, csv
 import cPickle as pickle
 import numpy as np
 import matplotlib.pyplot as plt
@@ -15,7 +16,7 @@ simPath         = '/home/oliver/SiSc/Courses/Thesis/iGRASP/IL-6/IL-6_ffcomp/anal
 runName         = '04_prod01_protein'
 expS2File       = simPath + '/' + 'common_files/IL6_S2_exp.dat'
 expCSFile       = simPath + '/' + 'common_files/IL6_CS_101801_clean.txt'
-skipFrames      = 10
+skipFrames      = 99
 rerunMD2NMR     = False
 rerunShiftPred  = False
 shiftPredMethod = 'sparta+'
@@ -77,6 +78,7 @@ class Compare_ff:
         self.simNames         = []
         self.simulations      = {}
         self.shiftPredictions = {}
+        self.expShifts        = {}
 
         self.S2               = {}
         self.S2resids         = []
@@ -166,11 +168,39 @@ class Compare_ff:
         Read experimentally determinded chemical shifts from expFile
         """
 
-        with open(expFile, 'r') as file:
-            lines = file.readlines()
+        # read data
+        with open(expFile, 'r') as expF:
+            reader = csv.reader(expF)
+            header = [field.strip() for field in reader.next()]
+            data   = [row for row in reader]
 
-        return lines
+        # initialize data structures
+        self.expShifts = {}
+        self.expShifts[header[0]] = np.zeros(len(data), dtype=np.int64) # resids
+        self.expShifts[header[1]] = []                                  # resnames (one letter code)
+        for field in header[2:]:
+            self.expShifts[field] = np.zeros(len(data), dtype=np.float64)
 
+        # parse shift data
+        for i, line in enumerate(data):
+
+            # first resids and resnames
+            self.expShifts[header[0]][i] = int(line[0].strip()) # resid
+            self.expShifts[header[1]].append(line[1].strip())   # resname
+
+            # then the shift data
+            for j, field in enumerate(line[2:]):
+
+                try: 
+                    self.expShifts[header[j+2]][i] = float(field)
+
+                except ValueError:
+                    if field.isspace() or len(field) == 0:
+                        self.expShifts[header[j+2]][i] = np.nan
+                    else:
+                        raise
+
+        
 # ==================================== #
 
     def rank_S2_predictions(self, forcefields, indices):
@@ -206,6 +236,33 @@ class Compare_ff:
 # ==================================== #
 
     def rank_shift_predictions(self):
-        pass
+        """
+        Rank simulations according to best aggreement with experimental chemical shifts
+        """
+
+        simName = self.simNames[0]
+
+        # loop through all elements for which there are chemical shift predictions
+        for element in self.shiftPredictions[simName].averageShifts.keys():
+
+            # construct boolean array for comparison
+            resids    = self.shiftPredictions[simName].averageShifts[element].resids
+            expResids = self.expShifts['Resid']
+
+            preBool = np.zeros_like(resids,    dtype=np.bool)
+            expBool = np.zeros_like(expResids, dtype=np.bool)
+
+            # for predicted shifts
+            for ID in expResids:
+                preBool = np.logical_or(resids==ID, preBool)
+
+            # for experimental shifts
+            for ID in resids:
+                expBool = np.logical_or(expResids==ID, expBool)
+
+            print expResids[expBool]
+            print resids[preBool]
+
+            break
 
 # ============================================================================ #
