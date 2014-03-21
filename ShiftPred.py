@@ -36,15 +36,17 @@ class ShiftPred:
 
 # ==================================== #
     
-    def predict(self, method=None, skip=0, verbose=False):
+    def predict(self, method=None, skip=None, verbose=None):
         """Predict chemical shifts
         method    specifies the method to use, if None, fall back to method given at initialization
         skip      number of frames to skip for average
         """
 
-        self.verbose = verbose
+        if verbose:
+            self.verbose = verbose
 
-        self.skip = int(skip)
+        if skip:
+            self.skip = int(skip)
 
         if method:
             self.method = method
@@ -102,67 +104,159 @@ class ShiftPred:
     def spartaplus(self):
         """Use SPARTA+ to predict average chemical shifts"""
 
+        chunkSize = 100 # maximum number of frames to predict at once
+
         predictionFiles = []
         structureFiles  = []
+        shiftsPerFrame  = {}  # Per atom a list of ChemShift object, one per frame
 
         # write frames as models in one pdb file
         PDBfiles = self.write_pdb(oneFile=False) 
 
-        # predict chemical shifts
-        try:
+        fileIndex  = 0
+        while fileIndex < len(PDBfiles):
 
-            cmd = ['sparta+',
-                   '-in']
-                   #'-out {}'.format(predictionFile),
-                   #'-outS {}'.format(structureFile),
+            startIndex = fileIndex
+            endIndex   = fileIndex + chunkSize
 
-            cmd += PDBfiles
+            if endIndex > len(PDBfiles):
+                endIndex = len(PDBfiles)
 
-            cwd = os.getcwd()
+            chunk = PDBfiles[startIndex:endIndex]
 
-            # execute spara+ and wait for completion
-            spartaOutFilename = '/tmp/sparta_{:s}.out'.format(random_string())
-            spartaOut         = open(spartaOutFilename, 'w')
+            fileIndex = endIndex
 
-            if self.verbose:
-                spartaProc        = sub.Popen(cmd)
-            else:
-                spartaProc        = sub.Popen(cmd, stdout=spartaOut, stderr=sub.STDOUT)
+            predictionFiles = []
+            structureFiles  = [] 
 
-            # store output filenames
-            for PDBfile in PDBfiles:
-                basename               = os.path.basename(PDBfile)
-                (filename, extension)  = os.path.splitext(basename)
-                predictionFiles.append("{}/{}_pred.tab".format(os.getcwd(), filename))
-                structureFiles.append("{}/{}_struct.tab".format(os.getcwd(), filename)) 
+            # predict chemical shifts
+            try:
 
-            (stdoutdata, stderrdata) = spartaProc.communicate()
-            if self.verbose:
-                print stdoutdata
-                print stderrdata
+                cmd = ['sparta+',
+                       '-in']
+                       #'-out {}'.format(predictionFile),
+                       #'-outS {}'.format(structureFile),
+
+                cmd += chunk
+
+                cwd = os.getcwd()
+
+                # execute sparta+ and wait for completion
+                spartaOutFilename = '/tmp/sparta_{:s}.out'.format(random_string())
+                spartaOut         = open(spartaOutFilename, 'w')
+
+                if self.verbose:
+                    spartaProc        = sub.Popen(cmd)
+                else:
+                    spartaProc        = sub.Popen(cmd, stdout=spartaOut, stderr=sub.STDOUT)
+
+                # store output filenames
+                if len(chunk) > 1:
+                    for PDBfile in chunk:
+                        basename               = os.path.basename(PDBfile)
+                        (filename, extension)  = os.path.splitext(basename)
+                        predictionFiles.append("{}/{}_pred.tab".format(os.getcwd(), filename))
+                        structureFiles.append("{}/{}_struct.tab".format(os.getcwd(), filename)) 
+                else:
+                    predictionFiles.append("pred.tab")
+                    structureFiles.append("struct.tab")
 
 
-        # if Popen failed, complain
-        except OSError:
-            self.rm_files()
-            print "sparta+ executable not in PATH"
-            sys.exit(1)
+                (stdoutdata, stderrdata) = spartaProc.communicate()
+                if self.verbose:
+                    print stdoutdata
+                    print stderrdata
+
+                spartaOut.close()
 
 
-        # read chemical shifts
-        shiftsPerFrame = {}  # Per atom a list of ChemShift object, one per frame
-        for filename in predictionFiles:
+            # if Popen failed, complain
+            except OSError:
+                spartaOut.close()
+                self.rm_files()
+                print "sparta+ executable not in PATH"
+                sys.exit(1)
 
-            shiftsThisFrame = self.spartaplus_read_shifts(filename)
 
-            for key in shiftsThisFrame.keys():
+            # read chemical shifts
+            for filename in predictionFiles:
 
-                # initialize list if not done yet
-                if not shiftsPerFrame.has_key(key):
-                    shiftsPerFrame[key] = []
+                shiftsThisFrame = self.spartaplus_read_shifts(filename)
 
-                # add shifts of this frame to list
-                shiftsPerFrame[key].append(shiftsThisFrame[key])
+                for key in shiftsThisFrame.keys():
+
+                    # initialize list if not done yet
+                    if not shiftsPerFrame.has_key(key):
+                        shiftsPerFrame[key] = []
+
+                    # add shifts of this frame to list
+                    shiftsPerFrame[key].append(shiftsThisFrame[key])
+
+            # remove pdb file and prediction and structure files
+            self.rm_files(chunk)
+            self.rm_files(predictionFiles)
+            self.rm_files(structureFiles) 
+            
+
+#        self.rm_files()
+#        sys.exit(0)
+
+
+#        # predict chemical shifts
+#        try:
+#
+#            cmd = ['sparta+',
+#                   '-in']
+#                   #'-out {}'.format(predictionFile),
+#                   #'-outS {}'.format(structureFile),
+#
+#            cmd += PDBfiles
+#
+#            cwd = os.getcwd()
+#
+#            # execute spara+ and wait for completion
+#            spartaOutFilename = '/tmp/sparta_{:s}.out'.format(random_string())
+#            spartaOut         = open(spartaOutFilename, 'w')
+#
+#            if self.verbose:
+#                spartaProc        = sub.Popen(cmd)
+#            else:
+#                spartaProc        = sub.Popen(cmd, stdout=spartaOut, stderr=sub.STDOUT)
+#
+#            # store output filenames
+#            for PDBfile in PDBfiles:
+#                basename               = os.path.basename(PDBfile)
+#                (filename, extension)  = os.path.splitext(basename)
+#                predictionFiles.append("{}/{}_pred.tab".format(os.getcwd(), filename))
+#                structureFiles.append("{}/{}_struct.tab".format(os.getcwd(), filename)) 
+#
+#            (stdoutdata, stderrdata) = spartaProc.communicate()
+#            if self.verbose:
+#                print stdoutdata
+#                print stderrdata
+#
+#
+#        # if Popen failed, complain
+#        except OSError:
+#            self.rm_files()
+#            print "sparta+ executable not in PATH"
+#            sys.exit(1)
+#
+#
+#        # read chemical shifts
+#        shiftsPerFrame = {}  # Per atom a list of ChemShift object, one per frame
+#        for filename in predictionFiles:
+#
+#            shiftsThisFrame = self.spartaplus_read_shifts(filename)
+#
+#            for key in shiftsThisFrame.keys():
+#
+#                # initialize list if not done yet
+#                if not shiftsPerFrame.has_key(key):
+#                    shiftsPerFrame[key] = []
+#
+#                # add shifts of this frame to list
+#                shiftsPerFrame[key].append(shiftsThisFrame[key])
 
 
         # average chemical shifts over frames
@@ -170,10 +264,10 @@ class ShiftPred:
         for key in shiftsPerFrame.keys():
             averageShifts[key] = AverageShifts(shiftsPerFrame[key])
 
-        # remove pdb file and prediction and structure files
-        self.rm_files()
-        self.rm_files(predictionFiles)
-        self.rm_files(structureFiles)
+#        # remove pdb file and prediction and structure files
+#        self.rm_files()
+#        self.rm_files(predictionFiles)
+#        self.rm_files(structureFiles)
 
         return averageShifts
 
@@ -260,11 +354,11 @@ class ShiftPred:
         if PDBpath:
             self.PDBpath     = PDBpath   # path at which to store temporary pdb files
 
-        # rewind and select only protein atoms
-        self.universe.trajectory.rewind()
-        protein = self.universe.selectAtoms('protein')
-
         if self.oneFile:
+
+            # rewind and select only protein atoms
+            self.universe.trajectory.rewind()
+            protein = self.universe.selectAtoms('protein')
 
             # create one writer for whole trajectory if all frames go into same file
             PDBfilename = "{}/{}.pdb".format(self.PDBpath, self.PDBbasename)
@@ -283,6 +377,10 @@ class ShiftPred:
             writer.close_trajectory() 
 
         else:
+
+            # rewind and select only protein atoms
+            self.universe.trajectory.rewind()
+            protein = self.universe.selectAtoms('protein')
 
             # loop through frames
             for nframe, ts in enumerate(self.universe.trajectory):

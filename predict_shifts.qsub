@@ -1,11 +1,23 @@
+#!/bin/bash
 #PBS -S /bin/bash
-#PBS -q jubio_small
+#PBS -q jubio
 #PBS -N predict_shifts
 #PBS -o /local/jubio/oschill/iGRASP/IL-6/IL-6_ffcomp/analysis/md2nmr/predict_shifts.out
 #PBS -j oe
+#PBS -l mem=1gb,nodes=4:ppn=16
+# #PBS -l mem=1gb,nodes=4
 
-source /usr/local/intel/impi/4.0.3.008/bin64/mpivars.sh
+# Python 2.7
+PATH=/usr/users/iff_th2/oschill/software/Python-2.7.4:$PATH
+
+# SPARTA+
+export SPARTAP_DIR=/usr/users/iff_th2/oschill/software/programs/SPARTA+
+export SPARTA_DIR=/usr/users/iff_th2/oschill/software/programs/SPARTA+
+export PATH=$PATH:${SPARTAP_DIR}
+
 
 cd /local/jubio/oschill/iGRASP/IL-6/IL-6_ffcomp/analysis/md2nmr
 
-mpiexec -n 16 python predict_shifts.py
+mpiexec -n 64 python predict_shifts.py
+
+cat $PBS_NODEFILE
